@@ -38,6 +38,8 @@ export default function App() {
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
     const [isRegistering, setIsRegistering] = useState(false)
+    const [authError, setAuthError] = useState(null)
+    const [connectionWarning, setConnectionWarning] = useState(false)
 
     // --- Expenses ---
     const [expenses, setExpenses] = useState([])
@@ -60,12 +62,33 @@ export default function App() {
 
     // --- Auth Effects ---
     useEffect(() => {
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            setSession(session)
-            setAuthLoading(false)
+        // Alerta de lentitud si Supabase tarda más de 5 segundos en responder (por ejemplo, si está pausado)
+        const timer = setTimeout(() => {
+            setConnectionWarning(true)
+        }, 5000)
+
+        supabase.auth.getSession()
+            .then(({ data: { session } }) => {
+                clearTimeout(timer)
+                setSession(session)
+                setAuthLoading(false)
+            })
+            .catch(err => {
+                clearTimeout(timer)
+                console.error("Error al obtener sesión de Supabase:", err)
+                setAuthError(err.message || "Error al conectar con el servidor.")
+                setAuthLoading(false)
+            })
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+            setSession(s)
+            setAuthLoading(false) // Aseguramos desactivar el loader al cambiar de estado de autenticación
         })
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
-        return () => subscription.unsubscribe()
+
+        return () => {
+            clearTimeout(timer)
+            subscription.unsubscribe()
+        }
     }, [])
 
     useEffect(() => {
@@ -95,9 +118,15 @@ export default function App() {
     // --- Expenses CRUD ---
     const fetchExpenses = async () => {
         setLoading(true)
-        const { data } = await supabase.from('expenses').select('*').order('due_date', { ascending: true })
-        setExpenses(data || [])
-        setLoading(false)
+        try {
+            const { data, error } = await supabase.from('expenses').select('*').order('due_date', { ascending: true })
+            if (error) throw error
+            setExpenses(data || [])
+        } catch (err) {
+            console.error("Error al cargar los gastos:", err)
+        } finally {
+            setLoading(false)
+        }
     }
 
     const markAsPaid = async (id) => {
@@ -132,8 +161,13 @@ export default function App() {
 
     // --- Subscriptions CRUD ---
     const fetchSubscriptions = async () => {
-        const { data } = await supabase.from('subscriptions').select('*').order('due_day', { ascending: true })
-        setSubscriptions(data || [])
+        try {
+            const { data, error } = await supabase.from('subscriptions').select('*').order('due_day', { ascending: true })
+            if (error) throw error
+            setSubscriptions(data || [])
+        } catch (err) {
+            console.error("Error al cargar las suscripciones:", err)
+        }
     }
 
     const createSubscription = async () => {
@@ -176,7 +210,43 @@ export default function App() {
     const nextDue = expenses.find(e => e.status === 'pending')
 
     // --- Auth UI ---
-    if (authLoading) return <div className="auth-container"><div className="stat-label">Cargando seguridad...</div></div>
+    if (authLoading) {
+        return (
+            <div className="auth-container">
+                <div style={{ textAlign: 'center', padding: '2rem' }}>
+                    <div className="stat-label" style={{ marginBottom: '1rem' }}>Cargando seguridad...</div>
+                    {connectionWarning && (
+                        <motion.p 
+                            initial={{ opacity: 0 }} 
+                            animate={{ opacity: 1 }}
+                            style={{ color: '#f59e0b', fontSize: '0.875rem', maxWidth: '320px', margin: '0 auto', lineHeight: '1.4' }}
+                        >
+                            ⚠️ La conexión está tardando más de lo esperado. Si tu base de datos de Supabase estaba pausada por inactividad, puede demorar hasta 1 minuto en reactivarse de forma automática.
+                        </motion.p>
+                    )}
+                </div>
+            </div>
+        )
+    }
+
+    if (authError) {
+        return (
+            <div className="auth-container">
+                <div className="auth-card glass-card" style={{ textAlign: 'center', borderColor: '#ef4444', borderWidth: '1px', borderStyle: 'solid' }}>
+                    <h2 style={{ color: '#ef4444', margin: '0 0 1rem 0', fontSize: '1.5rem' }}>Error de Conexión</h2>
+                    <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1.5rem', lineHeight: '1.4' }}>
+                        No se pudo establecer comunicación con la base de datos de Supabase.
+                    </p>
+                    <p style={{ color: '#ef4444', fontSize: '0.8rem', background: 'rgba(239, 68, 68, 0.1)', padding: '0.75rem', borderRadius: '10px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                        {authError}
+                    </p>
+                    <button className="primary" onClick={() => window.location.reload()} style={{ marginTop: '1.5rem', background: '#374151' }}>
+                        Reintentar
+                    </button>
+                </div>
+            </div>
+        )
+    }
 
     if (!session) return (
         <div className="auth-container">

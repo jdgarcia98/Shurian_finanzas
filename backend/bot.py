@@ -1,6 +1,8 @@
 import logging
 import os
+import threading
 from datetime import datetime
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, 
@@ -382,10 +384,42 @@ async def handle_callback_extended(update: Update, context: ContextTypes.DEFAULT
     # De lo contrario, usar el original
     await handle_callback(update, context)
 
+# Servidor web simple para el Health Check en Render (capa gratuita)
+class HealthCheckHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        # Omitimos los logs de peticiones HTTP para evitar ruido en el bot_debug.log
+        pass
+
+def start_health_server():
+    port = os.getenv("PORT")
+    if port:
+        try:
+            port = int(port)
+            server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            logger.info(f"Servidor de salud iniciado en el puerto {port}")
+        except Exception as e:
+            logger.error(f"Error al iniciar el servidor de salud: {e}")
+    else:
+        logger.info("Variable de entorno PORT no configurada. Omitiendo servidor de salud.")
+
 def main():
     if not TELEGRAM_TOKEN:
         logger.error("No se encontró TELEGRAM_TOKEN. Saliendo...")
         return
+        
+    start_health_server()
         
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
@@ -399,9 +433,10 @@ def main():
     hora_aviso = time(hour=9, minute=0, second=0)
     job_queue.run_daily(check_pending_expenses, time=hora_aviso, name='Aviso-24h')
     
-    # Cron de suscripciones: el día 1 de cada mes a las 08:00 AM
+    # Cron de suscripciones: se ejecuta todos los días a las 08:00 AM
+    # La lógica dentro de la función debe verificar si es el día 1 del mes.
     hora_subs = time(hour=8, minute=0, second=0)
-    job_queue.run_monthly(inject_monthly_subscriptions, when=hora_subs, day=1, name='Subs-Mensuales')
+    job_queue.run_daily(inject_monthly_subscriptions, time=hora_subs, name='Subs-Mensuales')
 
     # Handlers Base
     # Handlers Carga Manual

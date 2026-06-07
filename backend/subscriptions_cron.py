@@ -14,12 +14,16 @@ from config import supabase, SUPABASE_USER_ID
 logger = logging.getLogger(__name__)
 
 
-async def inject_monthly_subscriptions(context=None):
+async def inject_monthly_subscriptions(context=None, force_day_check=False):
     """
     Busca todas las suscripciones activas del usuario y crea un registro
     en 'expenses' para el mes actual si todavía no existe.
     """
     now = datetime.now()
+    if now.day != 1 and not force_day_check:
+        logger.info(f"[CRON] Hoy es día {now.day}. Solo se procesan suscripciones el día 1. Finalizando.")
+        return
+
     current_month = now.month
     current_year = now.year
 
@@ -75,3 +79,21 @@ async def inject_monthly_subscriptions(context=None):
 
     except Exception as e:
         logger.error(f"[CRON] Error inyectando suscripciones: {e}")
+
+
+if __name__ == "__main__":
+    import asyncio
+    import sys
+
+    # Configuración de logging para cuando se ejecuta desde consola
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Permitir la opción --force por línea de comandos para saltarse la validación del día 1
+    force = "--force" in sys.argv
+    if force:
+        logger.info("[CRON] Ejecución forzada desde consola activa (--force).")
+
+    asyncio.run(inject_monthly_subscriptions(force_day_check=force))
